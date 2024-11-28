@@ -25,7 +25,7 @@ class InvitesMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "longqiuyu"
     # 作者主页
@@ -45,8 +45,8 @@ class InvitesMonitor(_PluginBase):
     _onlyonce = False
 
     _notify = False
-
-    _begin_id = None
+    # 开始监控的帖子ID
+    _begin_id = 0
 
     _cookie = None
 
@@ -62,7 +62,7 @@ class InvitesMonitor(_PluginBase):
             self._cron = config.get("cron")
             self._notify = config.get("notify")
             self._onlyonce = config.get("onlyonce")
-            self._begin_id = config.get("begin_id")
+            self._begin_id = config.get("begin_id") or 0
             self._cookie = config.get("cookie")
 
         if self._onlyonce:
@@ -115,18 +115,10 @@ class InvitesMonitor(_PluginBase):
         try:
             if not self._begin_id:
                 logger.error("最新的帖子ID未配置！")
-            last_id = self.get_data(key="last_id")
-            if not last_id:
-                last_id = self._begin_id
-            if not last_id:
-                logger.error("未获取到最新的帖子ID！")
+            last_id = self._begin_id
             logger.debug(f"最新ID: {last_id}")
             # 浏览器仿真
-            html_content = PlaywrightHelper().get_page_source(
-                url='https://invites.fun/t/FY?sort=newest',
-                headless=True,
-                cookies=self._cookie
-            )
+            html_content = RequestUtils(cookies=self._cookie).get("https://invites.fun/t/FY?sort=newest")
             soup = BeautifulSoup(html_content, 'html.parser')
             # 查找 <noscript id="flarum-content"> 标签
             noscript_content = soup.find(id="flarum-content")
@@ -134,7 +126,6 @@ class InvitesMonitor(_PluginBase):
             links = noscript_content.find_all('a')
             # 定义正则表达式来提取ID
             url_pattern = re.compile(r'/d/(\d+)')
-            # 提取标题、地址和ID
             # 提取标题、地址和ID
             results = []
             for link in links:
@@ -163,7 +154,7 @@ class InvitesMonitor(_PluginBase):
                         link=href
                         )
             # 保持
-            self.save_data(key="last_id", value=last_id)
+            # self.save_data(key="last_id", value=last_id)
             # 更新配置的最新ID
             c_config:dict = self.get_config()
             c_config["begin_id"] = last_id
