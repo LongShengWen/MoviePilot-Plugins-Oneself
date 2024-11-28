@@ -1,49 +1,50 @@
-import glob
-import os
-import shutil
+from datetime import datetime, timedelta
+from typing import Any, List, Dict, Tuple, Optional
+import json
+import re
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
-
+from bs4 import BeautifulSoup
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app import schemas
 from app.core.config import settings
-from app.plugins import _PluginBase
-from typing import Any, List, Dict, Tuple, Optional
 from app.log import logger
+from app.plugins import _PluginBase
 from app.schemas import NotificationType
+from app.utils.http import RequestUtils
+from app.helper.browser import PlaywrightHelper
 
 
-class AutoBackup(_PluginBase):
+class InvitesMonitor(_PluginBase):
     # 插件名称
-    plugin_name = "自动备份"
+    plugin_name = "药丸邀请监控"
     # 插件描述
-    plugin_desc = "自动备份数据和配置文件。"
+    plugin_desc = "定时查看是否有新的发邀帖子"
     # 插件图标
-    plugin_icon = "Time_machine_B.png"
+    plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.0"
     # 插件作者
-    plugin_author = "thsrite"
+    plugin_author = "longqiuyu"
     # 作者主页
-    author_url = "https://github.com/thsrite"
+    author_url = "https://github.com/LongShengWen"
     # 插件配置项ID前缀
-    plugin_config_prefix = "autobackup_"
+    plugin_config_prefix = "invitesmonitor_"
     # 加载顺序
-    plugin_order = 17
+    plugin_order = 23
     # 可使用的用户级别
-    auth_level = 1
+    auth_level = 2
 
     # 私有属性
     _enabled = False
     # 任务执行间隔
     _cron = None
-    _cnt = None
     _onlyonce = False
     _notify = False
+    _begin_id = None
+    _cookie = None
 
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
@@ -55,25 +56,27 @@ class AutoBackup(_PluginBase):
         if config:
             self._enabled = config.get("enabled")
             self._cron = config.get("cron")
-            self._cnt = config.get("cnt")
             self._notify = config.get("notify")
             self._onlyonce = config.get("onlyonce")
+            self._begin_id = config.get("begin_id")
+            self._cookie = config.get("cookie")
 
-            # 加载模块
         if self._onlyonce:
+            # 定时服务
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-            logger.info(f"自动备份服务启动，立即运行一次")
-            self._scheduler.add_job(func=self.__backup, trigger='date',
+            logger.info(f"药丸监控服务启动，立即运行一次")
+            self._scheduler.add_job(func=self.__monitor, trigger='date',
                                     run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                                    name="自动备份")
+                                    name="药丸邀请监控")
             # 关闭一次性开关
             self._onlyonce = False
             self.update_config({
                 "onlyonce": False,
                 "cron": self._cron,
                 "enabled": self._enabled,
-                "cnt": self._cnt,
                 "notify": self._notify,
+                "begin_id": self._begin_id,
+                "cookie": self._cookie
             })
 
             # 启动任务
@@ -81,111 +84,90 @@ class AutoBackup(_PluginBase):
                 self._scheduler.print_jobs()
                 self._scheduler.start()
 
-    def api_backup(self, apikey: str):
+    def __analyze(self, data: str) -> Tuple[bool, str, str]:
         """
-        API调用备份
+        解析数据看是否有发邀
         """
-        if apikey != settings.API_TOKEN:
-            return schemas.Response(success=False, message="API密钥错误")
-        return self.__backup()
+        parsed_data = json.loads(data)
+        # 提取标题
+        title = parsed_data["data"]["attributes"]["title"]
+        # 提取发布时间
+        created_at = parsed_data["data"]["attributes"]["createdAt"]
+        # 提取标签 ID
+        tag_ids = [tag["id"] for tag in parsed_data["data"]["relationships"]["tags"]["data"]]
 
-    def __backup(self):
+        # 根据标签 ID 判断是否有 "发邀" 这个标签
+        has_fy_tag = any(included["attributes"]["name"] == "发邀"
+            for included in parsed_data["included"]
+            if included["type"] == "tags" and included["id"] in tag_ids
+        )
+        return [has_fy_tag, title, tag_ids]
+        
+    def __monitor(self):
         """
-        自动备份、删除备份
+        药丸监控
         """
-        logger.info(f"当前时间 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))} 开始备份")
+        if not self._begin_id:
+            logger.error("最新的帖子ID未配置！")
+        last_id = self.get_data(key="last_id")
+        if not last_id:
+            last_id = self._begin_id
+        if not last_id:
+            logger.error("未获取到最新的帖子ID！")
 
-        # docker用默认路径
-        bk_path = self.get_data_path()
+        # 浏览器仿真
+        html_content = PlaywrightHelper().get_page_source(
+            url='https://invites.fun/t/FY?sort=newest',
+            cookies=self._cookie
+        )
+        logger.debug(html_content)
+        soup = BeautifulSoup(html_content, 'html.parser')
+        # 查找 <noscript id="flarum-content"> 标签
+        noscript_content = soup.find(id="flarum-content")
+        # 查找其中所有的 <a> 标签
+        links = noscript_content.find_all('a')
+        # 定义正则表达式来提取ID
+        url_pattern = re.compile(r'/d/(\d+)')
+        # 提取标题、地址和ID
+        # 提取标题、地址和ID
+        results = []
+        for link in links:
+            href = link.get('href', '')  # 提取链接地址
+            title = link.get_text(strip=True)  # 提取标题
+            # 使用正则表达式从 href 中提取 ID
+            match = url_pattern.search(href)
+            if href and match:  # 确保链接地址和ID都存在
+                id = int(match.group(1))  # 提取 ID 并转化为整数
+                results.append((title, href, id))
 
-        # 备份
-        zip_file = self.backup_file(bk_path=bk_path)
+        # 按 ID 升序排序
+        sorted_results = sorted(results, key=lambda x: x[2])  # 按第三个元素（ID）排序
 
-        if zip_file:
-            success = True
-            msg = f"备份完成 备份文件 {zip_file}"
-            logger.info(msg)
-        else:
-            success = False
-            msg = "创建备份失败"
-            logger.error(msg)
-
-        # 清理备份
-        bk_cnt = 0
-        del_cnt = 0
-        if self._cnt:
-            # 获取指定路径下所有以"bk"开头的文件，按照创建时间从旧到新排序
-            files = sorted(glob.glob(f"{bk_path}/bk**"), key=os.path.getctime)
-            bk_cnt = len(files)
-            # 计算需要删除的文件数
-            del_cnt = bk_cnt - int(self._cnt)
-            if del_cnt > 0:
-                logger.info(
-                    f"获取到 {bk_path} 路径下备份文件数量 {bk_cnt} 保留数量 {int(self._cnt)} 需要删除备份文件数量 {del_cnt}")
-
-                # 遍历并删除最旧的几个备份
-                for i in range(del_cnt):
-                    os.remove(files[i])
-                    logger.debug(f"删除备份文件 {files[i]} 成功")
-            else:
-                logger.info(
-                    f"获取到 {bk_path} 路径下备份文件数量 {bk_cnt} 保留数量 {int(self._cnt)} 无需删除")
-
-        # 发送通知
-        if self._notify:
-            self.post_message(
-                mtype=NotificationType.SiteMessage,
-                title="【自动备份任务完成】",
-                text=f"创建备份{'成功' if zip_file else '失败'}\n"
-                     f"清理备份数量 {del_cnt}\n"
-                     f"剩余备份数量 {bk_cnt - del_cnt}")
-
-        return success, msg
-
-    @staticmethod
-    def backup_file(bk_path: Path = None):
-        """
-        @param bk_path     自定义备份路径
-        """
-        try:
-            # 创建备份文件夹
-            config_path = Path(settings.CONFIG_PATH)
-            backup_file = f"bk_{time.strftime('%Y%m%d%H%M%S')}"
-            backup_path = bk_path / backup_file
-            backup_path.mkdir(parents=True)
-
-            # 把现有的相关文件进行copy备份
-            category_file = config_path / "category.yaml"
-            if category_file.exists():
-                shutil.copy(category_file, backup_path)
-            userdb_file = config_path / "user.db"
-            if userdb_file.exists():
-                shutil.copy(userdb_file, backup_path)
-
-            zip_file = str(backup_path) + '.zip'
-            if os.path.exists(zip_file):
-                zip_file = str(backup_path) + '.zip'
-            shutil.make_archive(str(backup_path), 'zip', str(backup_path))
-            shutil.rmtree(str(backup_path))
-            return zip_file
-        except IOError:
-            return None
-
+        # 输出排序后的结果
+        for title, href, id in sorted_results:
+            logger.info(f"标题: {title}, 地址: {href}, ID: {id}")
+            if int(id) > int(last_id):
+                last_id = id
+                # 发送通知
+                if self._notify:
+                    self.post_message(
+                        mtype=NotificationType.Plugin,
+                        title="【药丸有发邀新帖子】",
+                        text=f"{title}",
+                        href=href
+                        )
+        # 保持
+        # self.save_data(key="last_id", value=last_id)
+        
     def get_state(self) -> bool:
-        return self._enabled
+        return self._enabled and self._cookie
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
         pass
 
     def get_api(self) -> List[Dict[str, Any]]:
-        return [{
-            "path": "/backup",
-            "endpoint": self.api_backup,
-            "methods": ["GET"],
-            "summary": "MoviePilot备份",
-            "description": "MoviePilot备份",
-        }]
+        pass
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
@@ -200,22 +182,13 @@ class AutoBackup(_PluginBase):
         """
         if self._enabled and self._cron:
             return [{
-                "id": "AutoBackup",
-                "name": "自动备份定时服务",
+                "id": "InvitesMonitor",
+                "name": "药丸监控服务",
                 "trigger": CronTrigger.from_crontab(self._cron),
-                "func": self.__backup,
+                "func": self.__monitor,
                 "kwargs": {}
             }]
-
-    def backup(self) -> schemas.Response:
-        """
-        API调用备份
-        """
-        success, msg = self.__backup()
-        return schemas.Response(
-            success=success,
-            message=msg
-        )
+        return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         """
@@ -284,15 +257,31 @@ class AutoBackup(_PluginBase):
                             {
                                 'component': 'VCol',
                                 'props': {
-                                    'cols': 12,
-                                    'md': 6
+                                    'cols': 6,
+                                    'md': 3
                                 },
                                 'content': [
                                     {
                                         'component': 'VTextField',
                                         'props': {
                                             'model': 'cron',
-                                            'label': '备份周期'
+                                            'label': '监控周期'
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 6,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'begin_id',
+                                            'label': '最新的ID'
                                         }
                                     }
                                 ]
@@ -307,29 +296,8 @@ class AutoBackup(_PluginBase):
                                     {
                                         'component': 'VTextField',
                                         'props': {
-                                            'model': 'cnt',
-                                            'label': '最大保留备份数'
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        'component': 'VRow',
-                        'content': [
-                            {
-                                'component': 'VCol',
-                                'props': {
-                                    'cols': 12,
-                                },
-                                'content': [
-                                    {
-                                        'component': 'VAlert',
-                                        'props': {
-                                            'type': 'info',
-                                            'variant': 'tonal',
-                                            'text': '备份文件路径默认为本地映射的config/plugins/AutoBackup。'
+                                            'model': 'cookie',
+                                            'label': '药丸的cookie'
                                         }
                                     }
                                 ]
@@ -340,11 +308,15 @@ class AutoBackup(_PluginBase):
             }
         ], {
             "enabled": False,
-            "request_method": "POST",
-            "webhook_url": ""
+            "onlyonce": False,
+            "notify": False,
+            "cron": "0 9 * * *",
+            "begin_id": None,
+            "cookie": None
         }
 
     def get_page(self) -> List[dict]:
+        # 查询同步详情
         pass
 
     def stop_service(self):
