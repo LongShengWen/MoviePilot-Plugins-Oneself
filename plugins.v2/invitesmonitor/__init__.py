@@ -41,9 +41,13 @@ class InvitesMonitor(_PluginBase):
     _enabled = False
     # 任务执行间隔
     _cron = None
+
     _onlyonce = False
+
     _notify = False
+
     _begin_id = None
+
     _cookie = None
 
     # 定时器
@@ -65,7 +69,8 @@ class InvitesMonitor(_PluginBase):
             # 定时服务
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
             logger.info(f"药丸监控服务启动，立即运行一次")
-            self._scheduler.add_job(func=self.__monitor, trigger='date',
+            self._scheduler.add_job(func=self.__monitor,
+                                    trigger='date',
                                     run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
                                     name="药丸邀请监控")
             # 关闭一次性开关
@@ -107,46 +112,47 @@ class InvitesMonitor(_PluginBase):
         """
         药丸监控
         """
-        if not self._begin_id:
-            logger.error("最新的帖子ID未配置！")
-        last_id = self.get_data(key="last_id")
-        if not last_id:
-            last_id = self._begin_id
-        if not last_id:
-            logger.error("未获取到最新的帖子ID！")
+        try:
+            if not self._begin_id:
+                logger.error("最新的帖子ID未配置！")
+            last_id = self.get_data(key="last_id")
+            if not last_id:
+                last_id = self._begin_id
+            if not last_id:
+                logger.error("未获取到最新的帖子ID！")
+            logger.debug(f"最新ID: {last_id}")
+            # 浏览器仿真
+            html_content = PlaywrightHelper().get_page_source(
+                url='https://invites.fun/t/FY?sort=newest',
+                headless=True,
+                cookies=self._cookie
+            )
+            soup = BeautifulSoup(html_content, 'html.parser')
+            # 查找 <noscript id="flarum-content"> 标签
+            noscript_content = soup.find(id="flarum-content")
+            # 查找其中所有的 <a> 标签
+            links = noscript_content.find_all('a')
+            # 定义正则表达式来提取ID
+            url_pattern = re.compile(r'/d/(\d+)')
+            # 提取标题、地址和ID
+            # 提取标题、地址和ID
+            results = []
+            for link in links:
+                href = link.get('href', '')  # 提取链接地址
+                title = link.get_text(strip=True)  # 提取标题
+                # 使用正则表达式从 href 中提取 ID
+                match = url_pattern.search(href)
+                if href and match:  # 确保链接地址和ID都存在
+                    id = int(match.group(1))  # 提取 ID 并转化为整数
+                    if id > int(last_id):
+                        results.append((title, href, id))
 
-        # 浏览器仿真
-        html_content = PlaywrightHelper().get_page_source(
-            url='https://invites.fun/t/FY?sort=newest',
-            cookies=self._cookie
-        )
-        logger.debug(html_content)
-        soup = BeautifulSoup(html_content, 'html.parser')
-        # 查找 <noscript id="flarum-content"> 标签
-        noscript_content = soup.find(id="flarum-content")
-        # 查找其中所有的 <a> 标签
-        links = noscript_content.find_all('a')
-        # 定义正则表达式来提取ID
-        url_pattern = re.compile(r'/d/(\d+)')
-        # 提取标题、地址和ID
-        # 提取标题、地址和ID
-        results = []
-        for link in links:
-            href = link.get('href', '')  # 提取链接地址
-            title = link.get_text(strip=True)  # 提取标题
-            # 使用正则表达式从 href 中提取 ID
-            match = url_pattern.search(href)
-            if href and match:  # 确保链接地址和ID都存在
-                id = int(match.group(1))  # 提取 ID 并转化为整数
-                results.append((title, href, id))
+            # 按 ID 升序排序
+            sorted_results = sorted(results, key=lambda x: x[2])  # 按第三个元素（ID）排序
 
-        # 按 ID 升序排序
-        sorted_results = sorted(results, key=lambda x: x[2])  # 按第三个元素（ID）排序
-
-        # 输出排序后的结果
-        for title, href, id in sorted_results:
-            logger.info(f"标题: {title}, 地址: {href}, ID: {id}")
-            if int(id) > int(last_id):
+            # 输出排序后的结果
+            for title, href, id in sorted_results:
+                logger.info(f"标题: {title}, 地址: {href}, ID: {id}")
                 last_id = id
                 # 发送通知
                 if self._notify:
@@ -154,13 +160,20 @@ class InvitesMonitor(_PluginBase):
                         mtype=NotificationType.Plugin,
                         title="【药丸有发邀新帖子】",
                         text=f"{title}",
-                        href=href
+                        link=href
                         )
-        # 保持
-        # self.save_data(key="last_id", value=last_id)
+            # 保持
+            self.save_data(key="last_id", value=last_id)
+            # 更新配置的最新ID
+            c_config:dict = self.get_config()
+            c_config["begin_id"] = last_id
+            self.update_config(config=c_config)
+            logger.info(f"监测完成！新增{len(results)}个帖子。")
+        except Exception as e:
+            logger.error(f"药丸帖子监测出错:{str(e)}")
         
     def get_state(self) -> bool:
-        return self._enabled and self._cookie
+        return True if self._enabled and self._cookie else False
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -212,7 +225,7 @@ class InvitesMonitor(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'enabled',
-                                            'label': '启用插件',
+                                            'label': '启用插件'
                                         }
                                     }
                                 ]
@@ -228,7 +241,7 @@ class InvitesMonitor(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'notify',
-                                            'label': '开启通知',
+                                            'label': '开启通知'
                                         }
                                     }
                                 ]
@@ -244,7 +257,7 @@ class InvitesMonitor(_PluginBase):
                                         'component': 'VSwitch',
                                         'props': {
                                             'model': 'onlyonce',
-                                            'label': '立即运行一次',
+                                            'label': '立即运行一次'
                                         }
                                     }
                                 ]
@@ -316,7 +329,6 @@ class InvitesMonitor(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        # 查询同步详情
         pass
 
     def stop_service(self):
