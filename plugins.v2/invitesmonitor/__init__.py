@@ -25,7 +25,7 @@ class InvitesMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "longqiuyu"
     # 作者主页
@@ -114,9 +114,8 @@ class InvitesMonitor(_PluginBase):
         """
         try:
             if not self._begin_id:
-                logger.error("最新的帖子ID未配置！")
-            last_id = self._begin_id
-            logger.debug(f"最新ID: {last_id}")
+                logger.debug("最新的帖子ID未配置！")
+            logger.debug(f"最新ID: {self._begin_id}")
             # 浏览器仿真
             html_content = RequestUtils(cookies=self._cookie).get("https://invites.fun/t/FY?sort=newest")
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -135,7 +134,7 @@ class InvitesMonitor(_PluginBase):
                 match = url_pattern.search(href)
                 if href and match:  # 确保链接地址和ID都存在
                     id = int(match.group(1))  # 提取 ID 并转化为整数
-                    if id > int(last_id):
+                    if id > int(self._begin_id):
                         results.append((title, href, id))
 
             # 按 ID 升序排序
@@ -144,7 +143,7 @@ class InvitesMonitor(_PluginBase):
             # 输出排序后的结果
             for title, href, id in sorted_results:
                 logger.info(f"标题: {title}, 地址: {href}, ID: {id}")
-                last_id = id
+                self._begin_id = id
                 # 发送通知
                 if self._notify:
                     self.post_message(
@@ -157,7 +156,7 @@ class InvitesMonitor(_PluginBase):
             # self.save_data(key="last_id", value=last_id)
             # 更新配置的最新ID
             c_config:dict = self.get_config()
-            c_config["begin_id"] = last_id
+            c_config["begin_id"] = self._begin_id
             self.update_config(config=c_config)
             logger.info(f"监测完成！新增{len(results)}个帖子。")
         except Exception as e:
