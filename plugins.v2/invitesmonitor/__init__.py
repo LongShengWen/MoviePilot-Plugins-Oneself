@@ -23,7 +23,7 @@ class InvitesMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.4"
+    plugin_version = "1.5"
     # 插件作者
     plugin_author = "longqiuyu"
     # 作者主页
@@ -39,13 +39,13 @@ class InvitesMonitor(_PluginBase):
     _enabled = False
     # 任务执行间隔
     _cron = None
-
+    # 立即执行一次
     _onlyonce = False
-
+    # 是否开启通知
     _notify = False
     # 开始监控的帖子ID
     _begin_id = 0
-
+    # Cookie
     _cookie = None
 
     # 定时器
@@ -122,7 +122,7 @@ class InvitesMonitor(_PluginBase):
 
             res = RequestUtils(cookies=self._cookie).get_res(url="https://invites.fun")
             if not res or res.status_code != 200:
-                logger.error("请求药丸错误")
+                logger.error("请求药丸错误!")
                 return
             # 获取csrfToken
             pattern = r'"csrfToken":"(.*?)"'
@@ -163,23 +163,29 @@ class InvitesMonitor(_PluginBase):
             # 按 ID 升序排序
             sorted_results = sorted(results, key=lambda x: x[2])  # 按第三个元素（ID）排序
 
+            messages: List = []
             # 输出排序后的结果
             for title, href, id in sorted_results:
                 title, description, create_time = self.__get_discussions(href=href, headers=headers)
                 logger.info(f"标题: {title}, 地址: {href}, ID: {id}")
                 self._begin_id = id
                 # 发送通知
-                if self._notify:
-                    logger.debug("发送消息")
-                    self.post_message(
-                            mtype=NotificationType.Plugin,
-                            title=f"药丸:{title}",
-                            text=f"{description} \n {create_time}",
-                            link=href
-                        )
+                messages.append(
+                    f"标题：{title}\n"
+                    f"描述：{description}\n"
+                    f"时间：{create_time}\n"
+                    f"详情：{href}\n"
+                    "————————————————————"
+                )
                 time.sleep(3)
-            # 保持
-            # self.save_data(key="last_id", value=last_id)
+            if self._notify and messages:
+                message = self.__escape_markdown(text="\n".join(messages))[:4096]
+                self.post_message(
+                        mtype=NotificationType.SiteMessage,
+                        title="【药丸有邀请】",
+                        text=message,
+                        link="https://invites.fun/t/FY?sort=newest"
+                    )
             # 更新配置的最新ID
             c_config:dict = self.get_config()
             c_config["begin_id"] = self._begin_id
@@ -187,7 +193,19 @@ class InvitesMonitor(_PluginBase):
             logger.info(f"监测完成！新增{len(results)}个帖子。")
         except Exception as e:
             logger.error(f"药丸帖子监测出错:{str(e)}")
-        
+    
+    def __escape_markdown(self, text: str, version: int = 2) -> str:
+        """
+        Escapes Markdown special characters for Telegram.
+        """
+        if version == 1:
+            escape_chars = r"_*"
+        elif version == 2:
+            escape_chars = r"_*"
+        else:
+            raise ValueError("Only Markdown versions 1 and 2 are supported.")
+        return "".join(f"\\{char}" if char in escape_chars else char for char in text)
+    
     def get_state(self) -> bool:
         return True if self._enabled and self._cookie else False
 

@@ -16,11 +16,12 @@
         "name": "药丸邀请监控",
         "description": "定时查看是否有新的发邀帖子",
         "labels": "站点,邀请",
-        "version": "1.4",
+        "version": "1.5",
         "icon": "statistic.png",
         "author": "longqiuyu",
         "level": 2,
         "history": {
+            "v1.5": "解决转译的问题",
             "v1.4": "获取帖子详情信息",
             "v1.3": "修复bug",
             "v1.2": "优化逻辑",
