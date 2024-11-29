@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Any, List, Dict, Tuple, Optional
-import json
+from datetime import datetime
 import re
 import time
 from datetime import datetime, timedelta
@@ -14,8 +14,6 @@ from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import NotificationType
 from app.utils.http import RequestUtils
-from app.helper.browser import PlaywrightHelper
-
 
 class InvitesMonitor(_PluginBase):
     # 插件名称
@@ -25,7 +23,7 @@ class InvitesMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     # 插件作者
     plugin_author = "longqiuyu"
     # 作者主页
@@ -89,24 +87,29 @@ class InvitesMonitor(_PluginBase):
                 self._scheduler.print_jobs()
                 self._scheduler.start()
 
-    def __analyze(self, data: str) -> Tuple[bool, str, str]:
+    def __get_discussions(self, href: str, headers: dict) -> Tuple[str, str, str]:
         """
         解析数据看是否有发邀
         """
-        parsed_data = json.loads(data)
-        # 提取标题
-        title = parsed_data["data"]["attributes"]["title"]
-        # 提取发布时间
-        created_at = parsed_data["data"]["attributes"]["createdAt"]
-        # 提取标签 ID
-        tag_ids = [tag["id"] for tag in parsed_data["data"]["relationships"]["tags"]["data"]]
+        html_content = RequestUtils(headers=headers, timeout=30).get(href)
+        if not html_content:
+            return None
+        soup = BeautifulSoup(html_content, 'html.parser')
+        # 提取 twitter:title
+        twitter_title_meta = soup.find('meta', {'name': 'twitter:title'})
+        twitter_title = twitter_title_meta['content'] if twitter_title_meta else None
 
-        # 根据标签 ID 判断是否有 "发邀" 这个标签
-        has_fy_tag = any(included["attributes"]["name"] == "发邀"
-            for included in parsed_data["included"]
-            if included["type"] == "tags" and included["id"] in tag_ids
-        )
-        return [has_fy_tag, title, tag_ids]
+        # 提取 article:published_time
+        published_time_meta = soup.find('meta', {'name': 'article:published_time'})
+        published_time = published_time_meta['content'] if published_time_meta else None
+        if published_time:
+            dt = datetime.strptime(published_time, "%Y-%m-%dT%H:%M:%S%z")
+            published_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 提取 twitter:description
+        twitter_description_meta = soup.find('meta', {'name': 'twitter:description'})
+        twitter_description = twitter_description_meta['content'] if twitter_description_meta else None
+        return [twitter_title, twitter_description, published_time]
         
     def __monitor(self):
         """
@@ -116,8 +119,28 @@ class InvitesMonitor(_PluginBase):
             if not self._begin_id:
                 logger.debug("最新的帖子ID未配置！")
             logger.debug(f"最新ID: {self._begin_id}")
-            # 浏览器仿真
-            html_content = RequestUtils(cookies=self._cookie).get("https://invites.fun/t/FY?sort=newest")
+
+            res = RequestUtils(cookies=self._cookie).get_res(url="https://invites.fun")
+            if not res or res.status_code != 200:
+                logger.error("请求药丸错误")
+                return
+            # 获取csrfToken
+            pattern = r'"csrfToken":"(.*?)"'
+            csrfToken = re.findall(pattern, res.text)
+            if not csrfToken:
+                logger.error("请求csrfToken失败")
+                return
+        
+            csrfToken = csrfToken[0]
+            headers = {
+                "X-Csrf-Token": csrfToken,
+                "X-Http-Method-Override": "PATCH",
+                "Cookie": self._cookie
+            }
+            html_content = RequestUtils(headers=headers, timeout=30).get("https://invites.fun/t/FY?sort=newest")
+            if not html_content:
+                logger.error("访问药丸失败！")
+                return
             soup = BeautifulSoup(html_content, 'html.parser')
             # 查找 <noscript id="flarum-content"> 标签
             noscript_content = soup.find(id="flarum-content")
@@ -142,16 +165,19 @@ class InvitesMonitor(_PluginBase):
 
             # 输出排序后的结果
             for title, href, id in sorted_results:
+                title, description, create_time = self.__get_discussions(href=href, headers=headers)
                 logger.info(f"标题: {title}, 地址: {href}, ID: {id}")
                 self._begin_id = id
                 # 发送通知
                 if self._notify:
+                    logger.debug("发送消息")
                     self.post_message(
-                        mtype=NotificationType.Plugin,
-                        title="【药丸有发邀新帖子】",
-                        text=f"{title}",
-                        link=href
+                            mtype=NotificationType.Plugin,
+                            title=f"药丸:{title}",
+                            text=f"{description} \n {create_time}",
+                            link=href
                         )
+                time.sleep(3)
             # 保持
             # self.save_data(key="last_id", value=last_id)
             # 更新配置的最新ID
