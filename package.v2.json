@@ -29,5 +29,17 @@
             "v1.1": "取消浏览器仿真",
             "v1.0": "定时查看是否有新的发邀帖子"
         }
+    },
+    "FixedTransfer": {
+        "name": "定向整理",
+        "description": "将指定目录的文件整理至指定媒体库",
+        "labels": "整理",
+        "version": "1.0",
+        "icon": "torrenttransfer.jpg",
+        "author": "longqiuyu",
+        "level": 2,
+        "history": {
+            "v1.0": "将指定目录的文件整理至指定媒体库"
+        }
     }
 }
