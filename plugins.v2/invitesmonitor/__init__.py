@@ -23,7 +23,7 @@ class InvitesMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.5"
+    plugin_version = "1.6"
     # 插件作者
     plugin_author = "longqiuyu"
     # 作者主页
@@ -164,6 +164,11 @@ class InvitesMonitor(_PluginBase):
             sorted_results = sorted(results, key=lambda x: x[2])  # 按第三个元素（ID）排序
 
             messages: List = []
+            if sorted_results:
+                messages.append(
+                    f"获取到{len(sorted_results)}个帖子"
+                    "————————————————————"
+                )
             # 输出排序后的结果
             for title, href, id in sorted_results:
                 title, description, create_time = self.__get_discussions(href=href, headers=headers)
