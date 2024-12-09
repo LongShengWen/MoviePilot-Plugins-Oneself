@@ -23,7 +23,7 @@ class InvitesMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "invites.png"
     # 插件版本
-    plugin_version = "1.6"
+    plugin_version = "1.7"
     # 插件作者
     plugin_author = "longqiuyu"
     # 作者主页
@@ -104,6 +104,9 @@ class InvitesMonitor(_PluginBase):
         published_time = published_time_meta['content'] if published_time_meta else None
         if published_time:
             dt = datetime.strptime(published_time, "%Y-%m-%dT%H:%M:%S%z")
+            # 时区转换
+            china_timezone = pytz.timezone(settings.TZ)
+            dt = dt.astimezone(china_timezone)
             published_time = dt.strftime("%Y-%m-%d %H:%M:%S")
 
         # 提取 twitter:description
