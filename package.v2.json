@@ -42,5 +42,17 @@
         "history": {
             "v1.0": "将指定目录的文件整理至指定媒体库"
         }
+    },
+    "QingWaTalk": {
+        "name": "青蛙自动喊话",
+        "description": "定时在青蛙喊话框中喊话",
+        "labels": "站点",
+        "version": "1.0",
+        "icon": "qingwa.png",
+        "author": "longqiuyu",
+        "level": 2,
+        "history": {
+            "v1.0": "定时在青蛙喊话框中喊话"
+        }
     }
 }
