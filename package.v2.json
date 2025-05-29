@@ -54,5 +54,17 @@
         "history": {
             "v1.0": "定时在青蛙喊话框中喊话"
         }
+    },
+    "st98sign": {
+        "name": "堂堂签到",
+        "description": "定时在堂堂中签到",
+        "labels": "站点",
+        "version": "1.1.0",
+        "icon": "Ferdi_B.png",
+        "author": "Desire",
+        "level": 2,
+        "history": {
+            "v1.1.0": "放到仓库"
+        }
     }
 }
